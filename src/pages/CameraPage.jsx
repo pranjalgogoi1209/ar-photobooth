@@ -6,11 +6,8 @@ const CameraPage = () => {
   const arSceneRef = useRef(null);
 
   const [capturedImage, setCapturedImage] = useState(null);
-  const [isCapturing, setIsCapturing] = useState(false);
 
-  // =====================================================
-  // INITIALIZE AR SCENE
-  // =====================================================
+  const [isCapturing, setIsCapturing] = useState(false);
 
   useEffect(() => {
     if (!arContainerRef.current) {
@@ -28,7 +25,7 @@ const CameraPage = () => {
   }, []);
 
   // =====================================================
-  // CAPTURE PHOTO
+  // CAPTURE
   // =====================================================
 
   const handleCapture = () => {
@@ -42,10 +39,7 @@ const CameraPage = () => {
       const image = arSceneRef.current.capturePhoto();
 
       if (!image) {
-        console.error("Unable to capture image");
-
-        alert("Unable to capture photo. Please try again.");
-
+        alert("Unable to capture photo.");
         return;
       }
 
@@ -53,7 +47,7 @@ const CameraPage = () => {
     } catch (error) {
       console.error("Capture error:", error);
 
-      alert("Something went wrong while capturing the photo.");
+      alert("Something went wrong while capturing.");
     } finally {
       setIsCapturing(false);
     }
@@ -80,33 +74,26 @@ const CameraPage = () => {
       return;
     }
 
-    try {
-      const link = document.createElement("a");
+    const link = document.createElement("a");
 
-      link.href = capturedImage;
+    link.href = capturedImage;
 
-      link.download = `ar-photo-${Date.now()}.png`;
+    link.download = `ar-photo-${Date.now()}.png`;
 
-      document.body.appendChild(link);
+    document.body.appendChild(link);
 
-      link.click();
+    link.click();
 
-      document.body.removeChild(link);
-    } catch (error) {
-      console.error("Download error:", error);
-
-      alert("Unable to download the photo.");
-    }
+    document.body.removeChild(link);
   };
-
-  // =====================================================
-  // UI
-  // =====================================================
 
   return (
     <div
       ref={arContainerRef}
-      className="position-relative w-100 vh-100 overflow-hidden bg-black"
+      className="position-relative w-100 vh-100 overflow-hidden bg-transparent"
+      style={{
+        touchAction: "none",
+      }}
     >
       {/* =================================================
           CAPTURE BUTTON
@@ -118,17 +105,27 @@ const CameraPage = () => {
           onClick={handleCapture}
           disabled={isCapturing}
           aria-label="Capture photo"
-          className="position-absolute btn btn-light rounded-circle shadow d-flex align-items-center justify-content-center"
+          className="btn btn-light rounded-circle shadow d-flex align-items-center justify-content-center"
           style={{
+            position: "absolute",
+
             width: "76px",
             height: "76px",
+
             bottom: "30px",
             left: "50%",
+
             transform: "translateX(-50%)",
-            zIndex: 1000,
-            border: "5px solid rgba(255, 255, 255, 0.5)",
+
+            zIndex: 9999,
+
+            border: "5px solid rgba(255,255,255,0.6)",
+
             fontSize: "30px",
+
             padding: 0,
+
+            pointerEvents: "auto",
           }}
         >
           {isCapturing ? "..." : "📸"}
@@ -136,20 +133,17 @@ const CameraPage = () => {
       )}
 
       {/* =================================================
-          CAPTURED PHOTO PREVIEW
+          PHOTO PREVIEW
       ================================================= */}
 
       {capturedImage && (
         <div
-          className="position-absolute top-0 start-0 w-100 h-100 bg-black d-flex flex-column align-items-center justify-content-center"
+          className="position-absolute top-0 start-0 w-100 h-100 bg-dark d-flex flex-column align-items-center justify-content-center"
           style={{
-            zIndex: 2000,
+            zIndex: 10000,
+            pointerEvents: "auto",
           }}
         >
-          {/* =============================================
-              PHOTO
-          ============================================= */}
-
           <div
             className="d-flex align-items-center justify-content-center w-100 px-3"
             style={{
@@ -168,10 +162,6 @@ const CameraPage = () => {
             />
           </div>
 
-          {/* =============================================
-              ACTION BUTTONS
-          ============================================= */}
-
           <div
             className="d-flex flex-wrap justify-content-center gap-3 px-3"
             style={{
@@ -179,22 +169,18 @@ const CameraPage = () => {
               alignItems: "center",
             }}
           >
-            {/* RETAKE */}
-
             <button
               type="button"
               onClick={handleRetake}
-              className="btn btn-secondary btn-lg px-4 py-2"
+              className="btn btn-secondary btn-lg px-4"
             >
               ↩ Retake
             </button>
 
-            {/* DOWNLOAD */}
-
             <button
               type="button"
               onClick={handleDownload}
-              className="btn btn-success btn-lg px-4 py-2"
+              className="btn btn-success btn-lg px-4"
             >
               ⬇ Download
             </button>
