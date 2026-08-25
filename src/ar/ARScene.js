@@ -164,19 +164,35 @@ export class ARScene {
       arModelImage,
 
       (texture) => {
+        console.log("AR Model image loaded successfully.");
+
         texture.colorSpace = THREE.SRGBColorSpace;
 
         const image = texture.image;
 
-        const aspectRatio = image.width / image.height;
+        const imageWidth = image.width;
+
+        const imageHeight = image.height;
+
+        const aspectRatio = imageWidth / imageHeight;
+
+        console.log("PNG size:", imageWidth, "x", imageHeight);
+
+        console.log("Aspect ratio:", aspectRatio);
+
+        // =================================================
+        // REAL WORLD MODEL SIZE
+        // =================================================
 
         const height = this.modelHeight;
 
         const width = height * aspectRatio;
 
-        // -------------------------------------------------
+        console.log("AR model size:", width, "x", height, "meters");
+
+        // =================================================
         // PERSON PLANE
-        // -------------------------------------------------
+        // =================================================
 
         const geometry = new THREE.PlaneGeometry(width, height);
 
@@ -184,41 +200,68 @@ export class ARScene {
           map: texture,
           transparent: true,
           side: THREE.DoubleSide,
+
+          // Important for PNG
           depthWrite: false,
+
+          // Remove almost-transparent pixels
           alphaTest: 0.01,
         });
 
         this.arModel = new THREE.Mesh(geometry, material);
 
         /*
-         * Plane is centered.
+         * PlaneGeometry is centered
+         * around its origin.
          *
          * Move it upward by half
-         * its height so its bottom
-         * represents the person's feet.
+         * its height.
+         *
+         * This makes the bottom
+         * of the PNG correspond
+         * to the floor anchor.
          */
         this.arModel.position.set(0, height / 2, 0);
 
+        // Keep hidden until user taps floor
         this.arModel.visible = false;
 
-        // -------------------------------------------------
+        // =================================================
         // FLOOR ANCHOR
-        // -------------------------------------------------
+        // =================================================
 
         this.arModelAnchor = new THREE.Group();
 
+        /*
+         * Anchor origin = person's feet
+         */
+        this.arModelAnchor.position.set(0, 0, 0);
+
+        this.arModelAnchor.rotation.set(0, 0, 0);
+
         this.arModelAnchor.visible = false;
 
+        // Add person to anchor
         this.arModelAnchor.add(this.arModel);
 
+        // Add anchor to scene
         this.scene.add(this.arModelAnchor);
 
-        console.log("AR Model loaded");
+        // Force world matrix update
+        this.arModelAnchor.updateMatrixWorld(true);
 
-        console.log("Model height:", height, "meters");
+        console.log("AR Model ready.");
       },
 
+      // ===================================================
+      // LOADING PROGRESS
+      // ===================================================
+
       undefined,
+
+      // ===================================================
+      // LOADING ERROR
+      // ===================================================
 
       (error) => {
         console.error("Failed to load AR Model:", error);
@@ -281,15 +324,15 @@ export class ARScene {
 
     this.container.appendChild(arButton);
 
-    // -------------------------------------------------
+    // =================================================
     // SESSION START
-    // -------------------------------------------------
+    // =================================================
 
     this.renderer.xr.addEventListener("sessionstart", this.handleSessionStart);
 
-    // -------------------------------------------------
+    // =================================================
     // SESSION END
-    // -------------------------------------------------
+    // =================================================
 
     this.renderer.xr.addEventListener("sessionend", this.handleSessionEnd);
   }
@@ -299,22 +342,19 @@ export class ARScene {
   // =====================================================
 
   handleSessionStart = () => {
-    console.log("WebXR session started");
+    console.log("WebXR session started.");
 
-    /*
-     * Hide START AR button.
-     *
-     * CameraPage will now show
-     * the Capture button.
-     */
+    // Hide START AR button
     const startButton = document.getElementById("webxr-start-button");
 
     if (startButton) {
       startButton.style.display = "none";
     }
 
+    // Start hit testing
     this.setupHitTestSource();
 
+    // Tell React
     if (this.onSessionStart) {
       this.onSessionStart();
     }
@@ -325,7 +365,7 @@ export class ARScene {
   // =====================================================
 
   handleSessionEnd = () => {
-    console.log("WebXR session ended");
+    console.log("WebXR session ended.");
 
     this.hitTestSource = null;
 
@@ -339,15 +379,14 @@ export class ARScene {
       this.arModelAnchor.visible = false;
     }
 
-    /*
-     * Show START AR again.
-     */
+    // Show START AR button again
     const startButton = document.getElementById("webxr-start-button");
 
     if (startButton) {
       startButton.style.display = "block";
     }
 
+    // Tell React
     if (this.onSessionEndCallback) {
       this.onSessionEndCallback();
     }
@@ -361,19 +400,33 @@ export class ARScene {
     const session = this.renderer.xr.getSession();
 
     if (!session) {
+      console.error("No active WebXR session.");
+
       return;
     }
 
     try {
+      // -----------------------------------------------
+      // Viewer reference space
+      // -----------------------------------------------
+
       const viewerSpace = await session.requestReferenceSpace("viewer");
+
+      // -----------------------------------------------
+      // Hit test source
+      // -----------------------------------------------
 
       this.hitTestSource = await session.requestHitTestSource({
         space: viewerSpace,
       });
 
+      // -----------------------------------------------
+      // Local reference space
+      // -----------------------------------------------
+
       this.localReferenceSpace = await session.requestReferenceSpace("local");
 
-      console.log("Hit-test ready");
+      console.log("Hit-test ready.");
     } catch (error) {
       console.error("Hit-test setup failed:", error);
     }
@@ -384,25 +437,86 @@ export class ARScene {
   // =====================================================
 
   onSelect = () => {
-    if (!this.reticle.visible || !this.arModelAnchor) {
+    console.log("Screen selected.");
+
+    // -----------------------------------------------
+    // Check reticle
+    // -----------------------------------------------
+
+    if (!this.reticle.visible) {
+      console.log("Cannot place model: no surface detected.");
+
       return;
     }
+
+    // -----------------------------------------------
+    // Check model
+    // -----------------------------------------------
+
+    if (!this.arModel) {
+      console.log("Cannot place model: AR model is not loaded yet.");
+
+      return;
+    }
+
+    // -----------------------------------------------
+    // Check anchor
+    // -----------------------------------------------
+
+    if (!this.arModelAnchor) {
+      console.log("Cannot place model: anchor is not ready.");
+
+      return;
+    }
+
+    // -----------------------------------------------
+    // Get floor position
+    // -----------------------------------------------
 
     const floorPosition = new THREE.Vector3();
 
     floorPosition.setFromMatrixPosition(this.reticle.matrix);
 
-    /*
-     * Put the anchor on the floor.
-     */
+    console.log("Detected floor position:", floorPosition);
+
+    // -----------------------------------------------
+    // Place anchor
+    // -----------------------------------------------
+
     this.arModelAnchor.position.copy(floorPosition);
 
-    /*
-     * Show the person.
-     */
+    // -----------------------------------------------
+    // Reset rotation
+    // -----------------------------------------------
+
+    this.arModelAnchor.rotation.set(0, 0, 0);
+
+    // -----------------------------------------------
+    // Make model visible
+    // -----------------------------------------------
+
+    this.arModel.visible = true;
+
     this.arModelAnchor.visible = true;
 
-    console.log("AR Model placed at floor:", floorPosition);
+    // -----------------------------------------------
+    // Update world matrices
+    // -----------------------------------------------
+
+    this.arModel.updateMatrixWorld(true);
+
+    this.arModelAnchor.updateMatrixWorld(true);
+
+    console.log("AR MODEL PLACED SUCCESSFULLY.");
+
+    console.log("Model visible:", this.arModel.visible);
+
+    console.log("Anchor visible:", this.arModelAnchor.visible);
+
+    console.log(
+      "Model world position:",
+      this.arModel.getWorldPosition(new THREE.Vector3()),
+    );
   };
 
   // =====================================================
@@ -421,14 +535,11 @@ export class ARScene {
     }
 
     try {
-      /*
-       * Render latest frame.
-       */
+      // Render latest frame
       this.renderer.render(this.scene, this.camera);
 
-      /*
-       * Convert canvas to PNG.
-       */
+      // Convert Three.js canvas
+      // to PNG
       const image = canvas.toDataURL("image/png");
 
       if (!image || image === "data:,") {
@@ -452,14 +563,12 @@ export class ARScene {
   retakePhoto() {
     console.log("Retaking photo...");
 
-    /*
-     * Keep the AR model in the same
-     * location.
-     *
-     * User can take another photo.
-     */
     if (this.arModelAnchor) {
       this.arModelAnchor.visible = true;
+    }
+
+    if (this.arModel) {
+      this.arModel.visible = true;
     }
   }
 
@@ -491,7 +600,7 @@ export class ARScene {
     }
 
     // ===================================================
-    // FACE CAMERA
+    // MAKE PERSON FACE CAMERA
     // ===================================================
 
     if (this.arModelAnchor && this.arModelAnchor.visible) {
@@ -507,6 +616,9 @@ export class ARScene {
 
       const dz = cameraPosition.z - modelPosition.z;
 
+      /*
+       * Rotate only around Y.
+       */
       this.arModelAnchor.rotation.y = Math.atan2(dx, dz);
     }
 
@@ -553,7 +665,10 @@ export class ARScene {
 
     this.renderer.setAnimationLoop(null);
 
+    // ---------------------------------------------------
     // Model cleanup
+    // ---------------------------------------------------
+
     if (this.arModel) {
       this.arModel.geometry.dispose();
 
@@ -564,11 +679,19 @@ export class ARScene {
       this.arModel.material.dispose();
     }
 
+    // ---------------------------------------------------
     // Reticle cleanup
+    // ---------------------------------------------------
+
     if (this.reticle) {
       this.reticle.geometry.dispose();
+
       this.reticle.material.dispose();
     }
+
+    // ---------------------------------------------------
+    // Renderer cleanup
+    // ---------------------------------------------------
 
     this.renderer.dispose();
 
