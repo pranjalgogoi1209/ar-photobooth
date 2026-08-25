@@ -40,7 +40,7 @@ export class ARScene {
 
     // Change this to control real-world height.
     // Try 2.0 or 2.1 if you want a larger person.
-    this.modelHeight = 1.5;
+    this.modelHeight = 1.8;
 
     this.init();
   }
