@@ -6,29 +6,48 @@ export class ARScene {
   constructor(container) {
     this.container = container;
 
-    // Three.js
+    // =====================================================
+    // THREE.JS
+    // =====================================================
+
     this.scene = null;
     this.camera = null;
     this.renderer = null;
 
-    // WebXR
+    // =====================================================
+    // WEBXR
+    // =====================================================
+
     this.controller = null;
     this.hitTestSource = null;
     this.localReferenceSpace = null;
 
-    // AR objects
+    // =====================================================
+    // AR OBJECTS
+    // =====================================================
+
     this.reticle = null;
+
+    // This is the floor anchor
+    this.arModelAnchor = null;
+
+    // This is the actual person image
     this.arModel = null;
 
-    // AR model settings
-    this.modelHeight = 1.8; // meters
+    // =====================================================
+    // AR MODEL SETTINGS
+    // =====================================================
+
+    // Change this to control real-world height.
+    // Try 2.0 or 2.1 if you want a larger person.
+    this.modelHeight = 2.0;
 
     this.init();
   }
 
-  // =========================================================
+  // =====================================================
   // INITIALIZE
-  // =========================================================
+  // =====================================================
 
   init() {
     this.createScene();
@@ -47,30 +66,30 @@ export class ARScene {
     this.renderer.setAnimationLoop(this.render);
   }
 
-  // =========================================================
+  // =====================================================
   // SCENE
-  // =========================================================
+  // =====================================================
 
   createScene() {
     this.scene = new THREE.Scene();
   }
 
-  // =========================================================
+  // =====================================================
   // CAMERA
-  // =========================================================
+  // =====================================================
 
   createCamera() {
     this.camera = new THREE.PerspectiveCamera(
       70,
       window.innerWidth / window.innerHeight,
       0.01,
-      20,
+      100,
     );
   }
 
-  // =========================================================
+  // =====================================================
   // RENDERER
-  // =========================================================
+  // =====================================================
 
   createRenderer() {
     this.renderer = new THREE.WebGLRenderer({
@@ -79,7 +98,7 @@ export class ARScene {
       preserveDrawingBuffer: true,
     });
 
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
     this.renderer.setSize(window.innerWidth, window.innerHeight);
 
@@ -87,30 +106,22 @@ export class ARScene {
 
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.renderer.shadowMap.enabled = true;
-
     this.container.appendChild(this.renderer.domElement);
   }
 
-  // =========================================================
-  // LIGHTS
-  // =========================================================
+  // =====================================================
+  // LIGHT
+  // =====================================================
 
   createLights() {
     const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3);
 
     this.scene.add(hemisphereLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
-
-    directionalLight.position.set(1, 3, 2);
-
-    this.scene.add(directionalLight);
   }
 
-  // =========================================================
+  // =====================================================
   // RETICLE
-  // =========================================================
+  // =====================================================
 
   createReticle() {
     const geometry = new THREE.RingGeometry(0.08, 0.1, 32);
@@ -133,9 +144,9 @@ export class ARScene {
     this.scene.add(this.reticle);
   }
 
-  // =========================================================
+  // =====================================================
   // AR MODEL
-  // =========================================================
+  // =====================================================
 
   createARModel() {
     const textureLoader = new THREE.TextureLoader();
@@ -144,27 +155,23 @@ export class ARScene {
       arModelImage,
 
       (texture) => {
-        console.log("AR Model image loaded");
-
         texture.colorSpace = THREE.SRGBColorSpace;
 
         const image = texture.image;
 
-        const imageWidth = image.width;
+        const aspectRatio = image.width / image.height;
 
-        const imageHeight = image.height;
+        // -----------------------------------------------
+        // REAL WORLD HEIGHT
+        // -----------------------------------------------
 
-        const aspectRatio = imageWidth / imageHeight;
-
-        /*
-         * Real-world height of the
-         * virtual person.
-         *
-         * 1.8 = 1.8 meters.
-         */
         const height = this.modelHeight;
 
         const width = height * aspectRatio;
+
+        // -----------------------------------------------
+        // PERSON PLANE
+        // -----------------------------------------------
 
         const geometry = new THREE.PlaneGeometry(width, height);
 
@@ -172,24 +179,53 @@ export class ARScene {
           map: texture,
           transparent: true,
           side: THREE.DoubleSide,
+
+          // Important for transparent PNG
           depthWrite: false,
+
+          // Slightly better transparency
+          alphaTest: 0.01,
         });
 
         this.arModel = new THREE.Mesh(geometry, material);
 
         /*
-         * PlaneGeometry is centered
-         * around its origin.
+         * IMPORTANT:
          *
-         * Move it upward by half
-         * its height so that the
-         * origin represents the feet.
+         * The plane is centered at its origin.
+         *
+         * Move the IMAGE upward by half
+         * its height.
+         *
+         * Therefore:
+         *
+         * anchor = floor
+         * image bottom = floor
          */
-        this.arModel.position.y = height / 2;
+        this.arModel.position.set(0, height / 2, 0);
 
-        this.arModel.visible = false;
+        this.arModel.visible = true;
 
-        this.scene.add(this.arModel);
+        // -----------------------------------------------
+        // FLOOR ANCHOR GROUP
+        // -----------------------------------------------
+
+        this.arModelAnchor = new THREE.Group();
+
+        /*
+         * The group's origin is the floor.
+         */
+        this.arModelAnchor.position.set(0, 0, 0);
+
+        this.arModelAnchor.visible = false;
+
+        this.arModelAnchor.add(this.arModel);
+
+        this.scene.add(this.arModelAnchor);
+
+        console.log("AR Model loaded");
+
+        console.log("Model height:", height, "meters");
       },
 
       undefined,
@@ -200,9 +236,9 @@ export class ARScene {
     );
   }
 
-  // =========================================================
+  // =====================================================
   // CONTROLLER
-  // =========================================================
+  // =====================================================
 
   createController() {
     this.controller = this.renderer.xr.getController(0);
@@ -212,9 +248,9 @@ export class ARScene {
     this.scene.add(this.controller);
   }
 
-  // =========================================================
+  // =====================================================
   // AR BUTTON
-  // =========================================================
+  // =====================================================
 
   createARButton() {
     const arButton = ARButton.createButton(this.renderer, {
@@ -250,9 +286,9 @@ export class ARScene {
     this.renderer.xr.addEventListener("sessionend", this.onSessionEnd);
   }
 
-  // =========================================================
+  // =====================================================
   // HIT TEST
-  // =========================================================
+  // =====================================================
 
   setupHitTestSource = async () => {
     const session = this.renderer.xr.getSession();
@@ -276,44 +312,50 @@ export class ARScene {
     }
   };
 
-  // =========================================================
-  // PLACE AR MODEL
-  // =========================================================
+  // =====================================================
+  // PLACE MODEL
+  // =====================================================
 
   onSelect = () => {
-    if (!this.reticle.visible || !this.arModel) {
+    if (!this.reticle.visible || !this.arModelAnchor) {
       return;
     }
 
-    /*
-     * Get the detected floor position.
-     */
-    const position = new THREE.Vector3();
+    // -----------------------------------------------
+    // Get detected floor position
+    // -----------------------------------------------
 
-    position.setFromMatrixPosition(this.reticle.matrix);
+    const floorPosition = new THREE.Vector3();
 
-    /*
-     * Place the model.
-     *
-     * IMPORTANT:
-     * arModel's local origin is
-     * positioned at the feet.
-     */
-    this.arModel.position.set(position.x, position.y, position.z);
+    floorPosition.setFromMatrixPosition(this.reticle.matrix);
 
-    this.arModel.visible = true;
+    // -----------------------------------------------
+    // IMPORTANT:
+    //
+    // Put the GROUP on the floor.
+    //
+    // NOT the image itself.
+    // -----------------------------------------------
 
-    console.log("AR Model placed at:", position);
+    this.arModelAnchor.position.copy(floorPosition);
+
+    // -----------------------------------------------
+    // Make model visible
+    // -----------------------------------------------
+
+    this.arModelAnchor.visible = true;
+
+    console.log("AR Model placed at floor:", floorPosition);
   };
 
-  // =========================================================
-  // RENDER LOOP
-  // =========================================================
+  // =====================================================
+  // RENDER
+  // =====================================================
 
   render = (timestamp, frame) => {
-    // ------------------------------------------
+    // ===================================================
     // HIT TEST
-    // ------------------------------------------
+    // ===================================================
 
     if (frame && this.hitTestSource && this.localReferenceSpace) {
       const hitTestResults = frame.getHitTestResults(this.hitTestSource);
@@ -333,38 +375,43 @@ export class ARScene {
       }
     }
 
-    // ------------------------------------------
-    // MAKE 2D MODEL FACE CAMERA
-    // ------------------------------------------
+    // ===================================================
+    // MAKE PERSON FACE CAMERA
+    // ===================================================
 
-    if (this.arModel && this.arModel.visible) {
+    if (this.arModelAnchor && this.arModelAnchor.visible) {
       const cameraPosition = new THREE.Vector3();
 
       this.camera.getWorldPosition(cameraPosition);
 
+      /*
+       * We only rotate around Y.
+       *
+       * This keeps the person's feet
+       * on the floor.
+       */
+
       const modelPosition = new THREE.Vector3();
 
-      this.arModel.getWorldPosition(modelPosition);
+      this.arModelAnchor.getWorldPosition(modelPosition);
 
-      /*
-       * Don't tilt the person
-       * vertically.
-       */
-      cameraPosition.y = modelPosition.y;
+      const dx = cameraPosition.x - modelPosition.x;
 
-      this.arModel.lookAt(cameraPosition);
+      const dz = cameraPosition.z - modelPosition.z;
+
+      this.arModelAnchor.rotation.y = Math.atan2(dx, dz);
     }
 
-    // ------------------------------------------
+    // ===================================================
     // RENDER
-    // ------------------------------------------
+    // ===================================================
 
     this.renderer.render(this.scene, this.camera);
   };
 
-  // =========================================================
+  // =====================================================
   // SESSION END
-  // =========================================================
+  // =====================================================
 
   onSessionEnd = () => {
     console.log("AR session ended");
@@ -377,14 +424,14 @@ export class ARScene {
       this.reticle.visible = false;
     }
 
-    if (this.arModel) {
-      this.arModel.visible = false;
+    if (this.arModelAnchor) {
+      this.arModelAnchor.visible = false;
     }
   };
 
-  // =========================================================
+  // =====================================================
   // RESIZE
-  // =========================================================
+  // =====================================================
 
   handleResize = () => {
     if (!this.camera || !this.renderer) {
@@ -398,9 +445,9 @@ export class ARScene {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   };
 
-  // =========================================================
+  // =====================================================
   // CLEANUP
-  // =========================================================
+  // =====================================================
 
   destroy() {
     window.removeEventListener("resize", this.handleResize);
@@ -421,7 +468,9 @@ export class ARScene {
     if (this.arModel) {
       this.arModel.geometry.dispose();
 
-      this.arModel.material.map?.dispose();
+      if (this.arModel.material.map) {
+        this.arModel.material.map.dispose();
+      }
 
       this.arModel.material.dispose();
     }
