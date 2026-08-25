@@ -5,9 +5,20 @@ const CameraPage = () => {
   const arContainerRef = useRef(null);
   const arSceneRef = useRef(null);
 
+  /*
+   * start
+   * capture
+   * preview
+   */
+  const [stage, setStage] = useState("start");
+
   const [capturedImage, setCapturedImage] = useState(null);
 
   const [isCapturing, setIsCapturing] = useState(false);
+
+  // =====================================================
+  // INITIALIZE AR
+  // =====================================================
 
   useEffect(() => {
     if (!arContainerRef.current) {
@@ -18,8 +29,37 @@ const CameraPage = () => {
 
     arSceneRef.current = arScene;
 
+    // ---------------------------------------------------
+    // AR STARTED
+    // ---------------------------------------------------
+
+    arScene.onSessionStart = () => {
+      console.log("CameraPage: AR started");
+
+      setCapturedImage(null);
+
+      setStage("capture");
+    };
+
+    // ---------------------------------------------------
+    // AR ENDED
+    // ---------------------------------------------------
+
+    arScene.onSessionEndCallback = () => {
+      console.log("CameraPage: AR ended");
+
+      setCapturedImage(null);
+
+      setStage("start");
+    };
+
+    // ---------------------------------------------------
+    // CLEANUP
+    // ---------------------------------------------------
+
     return () => {
       arScene.destroy();
+
       arSceneRef.current = null;
     };
   }, []);
@@ -28,26 +68,39 @@ const CameraPage = () => {
   // CAPTURE
   // =====================================================
 
-  const handleCapture = () => {
-    if (!arSceneRef.current || isCapturing) {
+  const handleCapture = async () => {
+    if (stage !== "capture" || !arSceneRef.current || isCapturing) {
       return;
     }
 
     setIsCapturing(true);
 
     try {
-      const image = arSceneRef.current.capturePhoto();
+      console.log("Taking photo...");
+
+      const image = await arSceneRef.current.capturePhoto();
 
       if (!image) {
-        alert("Unable to capture photo.");
-        return;
+        throw new Error("No image returned.");
       }
 
+      /*
+       * Store captured image.
+       */
       setCapturedImage(image);
+
+      /*
+       * Hide Capture button.
+       *
+       * Show Retake + Download.
+       */
+      setStage("preview");
+
+      console.log("Photo captured.");
     } catch (error) {
       console.error("Capture error:", error);
 
-      alert("Something went wrong while capturing.");
+      alert("Something went wrong while capturing the photo.");
     } finally {
       setIsCapturing(false);
     }
@@ -58,11 +111,18 @@ const CameraPage = () => {
   // =====================================================
 
   const handleRetake = () => {
+    console.log("Retake clicked");
+
     setCapturedImage(null);
 
     if (arSceneRef.current) {
       arSceneRef.current.retakePhoto();
     }
+
+    /*
+     * Show Capture button again.
+     */
+    setStage("capture");
   };
 
   // =====================================================
@@ -70,9 +130,11 @@ const CameraPage = () => {
   // =====================================================
 
   const handleDownload = () => {
-    if (!capturedImage) {
+    if (!capturedImage || stage !== "preview") {
       return;
     }
+
+    console.log("Downloading photo...");
 
     const link = document.createElement("a");
 
@@ -87,63 +149,70 @@ const CameraPage = () => {
     document.body.removeChild(link);
   };
 
+  // =====================================================
+  // UI
+  // =====================================================
+
   return (
     <div
       ref={arContainerRef}
-      className="position-relative w-100 vh-100 overflow-hidden bg-transparent"
+      className="position-relative w-100 vh-100 overflow-hidden bg-black"
       style={{
         touchAction: "none",
       }}
     >
       {/* =================================================
           CAPTURE BUTTON
+          ONLY AFTER AR STARTS
       ================================================= */}
 
-      {!capturedImage && (
-        <button
-          type="button"
-          onClick={handleCapture}
-          disabled={isCapturing}
-          aria-label="Capture photo"
-          className="btn btn-light rounded-circle shadow d-flex align-items-center justify-content-center"
+      {stage === "capture" && (
+        <div
+          className="position-absolute bottom-0 start-0 w-100 d-flex justify-content-center"
           style={{
-            position: "absolute",
-
-            width: "76px",
-            height: "76px",
-
-            bottom: "30px",
-            left: "50%",
-
-            transform: "translateX(-50%)",
-
-            zIndex: 9999,
-
-            border: "5px solid rgba(255,255,255,0.6)",
-
-            fontSize: "30px",
-
-            padding: 0,
-
-            pointerEvents: "auto",
+            zIndex: 10000,
+            paddingBottom: "30px",
+            pointerEvents: "none",
           }}
         >
-          {isCapturing ? "..." : "📸"}
-        </button>
+          <button
+            type="button"
+            onClick={handleCapture}
+            disabled={isCapturing}
+            className="btn btn-light rounded-circle shadow d-flex align-items-center justify-content-center"
+            style={{
+              width: "76px",
+              height: "76px",
+
+              border: "5px solid rgba(255,255,255,0.6)",
+
+              fontSize: "30px",
+
+              padding: 0,
+
+              pointerEvents: "auto",
+            }}
+          >
+            {isCapturing ? "..." : "📸"}
+          </button>
+        </div>
       )}
 
       {/* =================================================
           PHOTO PREVIEW
+          ONLY AFTER CAPTURE
       ================================================= */}
 
-      {capturedImage && (
+      {stage === "preview" && capturedImage && (
         <div
           className="position-absolute top-0 start-0 w-100 h-100 bg-dark d-flex flex-column align-items-center justify-content-center"
           style={{
-            zIndex: 10000,
+            zIndex: 20000,
             pointerEvents: "auto",
           }}
         >
+          {/* PHOTO */}
+
           <div
             className="d-flex align-items-center justify-content-center w-100 px-3"
             style={{
@@ -152,7 +221,7 @@ const CameraPage = () => {
           >
             <img
               src={capturedImage}
-              alt="Captured AR photo"
+              alt="Captured AR"
               className="img-fluid rounded"
               style={{
                 maxWidth: "100%",
@@ -162,13 +231,16 @@ const CameraPage = () => {
             />
           </div>
 
+          {/* BUTTONS */}
+
           <div
-            className="d-flex flex-wrap justify-content-center gap-3 px-3"
+            className="d-flex justify-content-center align-items-center gap-3 flex-wrap"
             style={{
               height: "22vh",
-              alignItems: "center",
             }}
           >
+            {/* RETAKE */}
+
             <button
               type="button"
               onClick={handleRetake}
@@ -176,6 +248,8 @@ const CameraPage = () => {
             >
               ↩ Retake
             </button>
+
+            {/* DOWNLOAD */}
 
             <button
               type="button"
