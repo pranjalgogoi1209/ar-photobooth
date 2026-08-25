@@ -22,20 +22,18 @@ export class ARScene {
     this.hitTestSource = null;
     this.localReferenceSpace = null;
 
+    this.xrSession = null;
+
     // =====================================================
     // AR OBJECTS
     // =====================================================
 
     this.reticle = null;
-
-    // Floor anchor
     this.arModelAnchor = null;
-
-    // PNG person
     this.arModel = null;
 
     // =====================================================
-    // AR MODEL SETTINGS
+    // MODEL SETTINGS
     // =====================================================
 
     this.modelHeight = 1.8;
@@ -46,6 +44,17 @@ export class ARScene {
 
     this.onSessionStart = null;
     this.onSessionEndCallback = null;
+
+    // =====================================================
+    // CAPTURE
+    // =====================================================
+
+    this.captureRequested = false;
+    this.captureResolve = null;
+    this.captureReject = null;
+
+    this.captureCanvas = null;
+    this.captureContext = null;
 
     // =====================================================
     // INIT
@@ -69,6 +78,8 @@ export class ARScene {
 
     this.createController();
     this.createARButton();
+
+    this.createCaptureCanvas();
 
     window.addEventListener("resize", this.handleResize);
 
@@ -170,29 +181,19 @@ export class ARScene {
 
         const image = texture.image;
 
-        const imageWidth = image.width;
-
-        const imageHeight = image.height;
-
-        const aspectRatio = imageWidth / imageHeight;
-
-        console.log("PNG size:", imageWidth, "x", imageHeight);
-
-        console.log("Aspect ratio:", aspectRatio);
-
-        // =================================================
-        // REAL WORLD MODEL SIZE
-        // =================================================
+        const aspectRatio = image.width / image.height;
 
         const height = this.modelHeight;
 
         const width = height * aspectRatio;
 
-        console.log("AR model size:", width, "x", height, "meters");
+        console.log("PNG:", image.width, "x", image.height);
 
-        // =================================================
+        console.log("AR Model:", width, "x", height, "meters");
+
+        // -------------------------------------------------
         // PERSON PLANE
-        // =================================================
+        // -------------------------------------------------
 
         const geometry = new THREE.PlaneGeometry(width, height);
 
@@ -200,68 +201,38 @@ export class ARScene {
           map: texture,
           transparent: true,
           side: THREE.DoubleSide,
-
-          // Important for PNG
           depthWrite: false,
-
-          // Remove almost-transparent pixels
           alphaTest: 0.01,
         });
 
         this.arModel = new THREE.Mesh(geometry, material);
 
         /*
-         * PlaneGeometry is centered
-         * around its origin.
-         *
-         * Move it upward by half
-         * its height.
-         *
-         * This makes the bottom
-         * of the PNG correspond
-         * to the floor anchor.
+         * Move PNG upward so its
+         * bottom is at the floor.
          */
         this.arModel.position.set(0, height / 2, 0);
 
-        // Keep hidden until user taps floor
         this.arModel.visible = false;
 
-        // =================================================
+        // -------------------------------------------------
         // FLOOR ANCHOR
-        // =================================================
+        // -------------------------------------------------
 
         this.arModelAnchor = new THREE.Group();
 
-        /*
-         * Anchor origin = person's feet
-         */
-        this.arModelAnchor.position.set(0, 0, 0);
-
-        this.arModelAnchor.rotation.set(0, 0, 0);
-
         this.arModelAnchor.visible = false;
 
-        // Add person to anchor
         this.arModelAnchor.add(this.arModel);
 
-        // Add anchor to scene
         this.scene.add(this.arModelAnchor);
 
-        // Force world matrix update
         this.arModelAnchor.updateMatrixWorld(true);
 
         console.log("AR Model ready.");
       },
 
-      // ===================================================
-      // LOADING PROGRESS
-      // ===================================================
-
       undefined,
-
-      // ===================================================
-      // LOADING ERROR
-      // ===================================================
 
       (error) => {
         console.error("Failed to load AR Model:", error);
@@ -287,7 +258,7 @@ export class ARScene {
 
   createARButton() {
     const arButton = ARButton.createButton(this.renderer, {
-      requiredFeatures: ["hit-test"],
+      requiredFeatures: ["hit-test", "camera-access"],
 
       optionalFeatures: ["dom-overlay"],
 
@@ -324,15 +295,15 @@ export class ARScene {
 
     this.container.appendChild(arButton);
 
-    // =================================================
+    // ===================================================
     // SESSION START
-    // =================================================
+    // ===================================================
 
     this.renderer.xr.addEventListener("sessionstart", this.handleSessionStart);
 
-    // =================================================
+    // ===================================================
     // SESSION END
-    // =================================================
+    // ===================================================
 
     this.renderer.xr.addEventListener("sessionend", this.handleSessionEnd);
   }
@@ -344,17 +315,16 @@ export class ARScene {
   handleSessionStart = () => {
     console.log("WebXR session started.");
 
-    // Hide START AR button
+    this.xrSession = this.renderer.xr.getSession();
+
     const startButton = document.getElementById("webxr-start-button");
 
     if (startButton) {
       startButton.style.display = "none";
     }
 
-    // Start hit testing
     this.setupHitTestSource();
 
-    // Tell React
     if (this.onSessionStart) {
       this.onSessionStart();
     }
@@ -366,6 +336,8 @@ export class ARScene {
 
   handleSessionEnd = () => {
     console.log("WebXR session ended.");
+
+    this.xrSession = null;
 
     this.hitTestSource = null;
 
@@ -379,14 +351,22 @@ export class ARScene {
       this.arModelAnchor.visible = false;
     }
 
-    // Show START AR button again
     const startButton = document.getElementById("webxr-start-button");
 
     if (startButton) {
       startButton.style.display = "block";
     }
 
-    // Tell React
+    if (this.captureReject) {
+      this.captureReject(new Error("AR session ended."));
+
+      this.captureResolve = null;
+
+      this.captureReject = null;
+
+      this.captureRequested = false;
+    }
+
     if (this.onSessionEndCallback) {
       this.onSessionEndCallback();
     }
@@ -400,29 +380,15 @@ export class ARScene {
     const session = this.renderer.xr.getSession();
 
     if (!session) {
-      console.error("No active WebXR session.");
-
       return;
     }
 
     try {
-      // -----------------------------------------------
-      // Viewer reference space
-      // -----------------------------------------------
-
       const viewerSpace = await session.requestReferenceSpace("viewer");
-
-      // -----------------------------------------------
-      // Hit test source
-      // -----------------------------------------------
 
       this.hitTestSource = await session.requestHitTestSource({
         space: viewerSpace,
       });
-
-      // -----------------------------------------------
-      // Local reference space
-      // -----------------------------------------------
 
       this.localReferenceSpace = await session.requestReferenceSpace("local");
 
@@ -439,120 +405,244 @@ export class ARScene {
   onSelect = () => {
     console.log("Screen selected.");
 
-    // -----------------------------------------------
-    // Check reticle
-    // -----------------------------------------------
-
     if (!this.reticle.visible) {
-      console.log("Cannot place model: no surface detected.");
+      console.log("No detected surface.");
 
       return;
     }
-
-    // -----------------------------------------------
-    // Check model
-    // -----------------------------------------------
 
     if (!this.arModel) {
-      console.log("Cannot place model: AR model is not loaded yet.");
+      console.log("AR model is not loaded.");
 
       return;
     }
-
-    // -----------------------------------------------
-    // Check anchor
-    // -----------------------------------------------
 
     if (!this.arModelAnchor) {
-      console.log("Cannot place model: anchor is not ready.");
+      console.log("AR model anchor is not ready.");
 
       return;
     }
-
-    // -----------------------------------------------
-    // Get floor position
-    // -----------------------------------------------
 
     const floorPosition = new THREE.Vector3();
 
     floorPosition.setFromMatrixPosition(this.reticle.matrix);
 
-    console.log("Detected floor position:", floorPosition);
-
-    // -----------------------------------------------
-    // Place anchor
-    // -----------------------------------------------
+    console.log("Floor position:", floorPosition);
 
     this.arModelAnchor.position.copy(floorPosition);
 
-    // -----------------------------------------------
-    // Reset rotation
-    // -----------------------------------------------
-
     this.arModelAnchor.rotation.set(0, 0, 0);
-
-    // -----------------------------------------------
-    // Make model visible
-    // -----------------------------------------------
 
     this.arModel.visible = true;
 
     this.arModelAnchor.visible = true;
 
-    // -----------------------------------------------
-    // Update world matrices
-    // -----------------------------------------------
-
     this.arModel.updateMatrixWorld(true);
 
     this.arModelAnchor.updateMatrixWorld(true);
 
-    console.log("AR MODEL PLACED SUCCESSFULLY.");
-
-    console.log("Model visible:", this.arModel.visible);
-
-    console.log("Anchor visible:", this.arModelAnchor.visible);
-
-    console.log(
-      "Model world position:",
-      this.arModel.getWorldPosition(new THREE.Vector3()),
-    );
+    console.log("AR MODEL PLACED.");
   };
+
+  // =====================================================
+  // CAPTURE CANVAS
+  // =====================================================
+
+  createCaptureCanvas() {
+    this.captureCanvas = document.createElement("canvas");
+
+    this.captureContext = this.captureCanvas.getContext("2d", {
+      willReadFrequently: true,
+    });
+  }
 
   // =====================================================
   // CAPTURE PHOTO
   // =====================================================
 
   capturePhoto() {
-    if (!this.renderer) {
-      throw new Error("Renderer is not available.");
-    }
+    /*
+     * IMPORTANT:
+     *
+     * We cannot immediately read the
+     * WebXR camera texture here.
+     *
+     * getCameraTexture() is only valid
+     * during the current XR animation
+     * frame.
+     *
+     * So we request capture and let
+     * render() perform the actual capture.
+     */
 
-    const canvas = this.renderer.domElement;
+    return new Promise((resolve, reject) => {
+      if (!this.renderer.xr.isPresenting) {
+        reject(new Error("AR session is not active."));
 
-    if (!canvas) {
-      throw new Error("Renderer canvas not found.");
-    }
-
-    try {
-      // Render latest frame
-      this.renderer.render(this.scene, this.camera);
-
-      // Convert Three.js canvas
-      // to PNG
-      const image = canvas.toDataURL("image/png");
-
-      if (!image || image === "data:,") {
-        throw new Error("Canvas returned an empty image.");
+        return;
       }
 
-      console.log("Photo captured successfully.");
+      if (this.captureRequested) {
+        reject(new Error("A capture is already in progress."));
 
-      return image;
+        return;
+      }
+
+      console.log("Capture requested.");
+
+      this.captureRequested = true;
+
+      this.captureResolve = resolve;
+
+      this.captureReject = reject;
+    });
+  }
+
+  // =====================================================
+  // CAPTURE CURRENT XR FRAME
+  // =====================================================
+
+  captureCurrentXRFrame(frame) {
+    try {
+      console.log("Capturing current XR frame...");
+
+      const xrCamera = this.renderer.xr.getCamera();
+
+      if (!xrCamera || !xrCamera.cameras || xrCamera.cameras.length === 0) {
+        throw new Error("XR camera is not available.");
+      }
+
+      /*
+       * Get the first camera/view.
+       */
+      const viewCamera = xrCamera.cameras[0];
+
+      /*
+       * Three.js r179+ camera-access API.
+       *
+       * This gives us the raw camera
+       * texture for the CURRENT XR frame.
+       */
+      const cameraTexture = this.renderer.xr.getCameraTexture(viewCamera);
+
+      if (!cameraTexture) {
+        throw new Error(
+          "WebXR camera texture is not available on this device/browser.",
+        );
+      }
+
+      console.log("Camera texture obtained.");
+
+      /*
+       * --------------------------------------------------
+       * IMPORTANT
+       * --------------------------------------------------
+       *
+       * The camera texture is an opaque GPU
+       * texture. It cannot be passed directly
+       * to canvas.drawImage().
+       *
+       * We therefore use Three.js to render
+       * the camera texture into our capture
+       * canvas.
+       */
+
+      const cameraMaterial = new THREE.MeshBasicMaterial({
+        map: cameraTexture,
+        depthTest: false,
+        depthWrite: false,
+      });
+
+      const cameraGeometry = new THREE.PlaneGeometry(2, 2);
+
+      const cameraMesh = new THREE.Mesh(cameraGeometry, cameraMaterial);
+
+      const cameraScene = new THREE.Scene();
+
+      const camera2D = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+      cameraScene.add(cameraMesh);
+
+      /*
+       * Camera frame dimensions.
+       */
+      const cameraWidth = viewCamera.viewport?.z || window.innerWidth;
+
+      const cameraHeight = viewCamera.viewport?.w || window.innerHeight;
+
+      const width = Math.max(1, Math.floor(cameraWidth));
+
+      const height = Math.max(1, Math.floor(cameraHeight));
+
+      this.captureCanvas.width = width;
+
+      this.captureCanvas.height = height;
+
+      /*
+       * Render camera texture.
+       */
+      this.renderer.setRenderTarget(null);
+
+      /*
+       * Save renderer state.
+       */
+      const oldXrEnabled = this.renderer.xr.enabled;
+
+      this.renderer.xr.enabled = false;
+
+      /*
+       * Render camera image to
+       * the canvas.
+       */
+      this.renderer.render(cameraScene, camera2D);
+
+      /*
+       * Now render the AR model on top.
+       */
+      this.renderer.render(this.scene, this.camera);
+
+      /*
+       * Read the renderer canvas.
+       */
+      const image = this.renderer.domElement.toDataURL("image/png");
+
+      /*
+       * Restore XR.
+       */
+      this.renderer.xr.enabled = oldXrEnabled;
+
+      /*
+       * Cleanup temporary objects.
+       */
+      cameraGeometry.dispose();
+      cameraMaterial.dispose();
+
+      /*
+       * Resolve capture.
+       */
+      if (this.captureResolve) {
+        this.captureResolve(image);
+      }
+
+      this.captureResolve = null;
+
+      this.captureReject = null;
+
+      this.captureRequested = false;
+
+      console.log("Capture completed.");
     } catch (error) {
-      console.error("Photo capture failed:", error);
+      console.error("XR capture failed:", error);
 
-      throw error;
+      if (this.captureReject) {
+        this.captureReject(error);
+      }
+
+      this.captureResolve = null;
+
+      this.captureReject = null;
+
+      this.captureRequested = false;
     }
   }
 
@@ -600,7 +690,7 @@ export class ARScene {
     }
 
     // ===================================================
-    // MAKE PERSON FACE CAMERA
+    // FACE CAMERA
     // ===================================================
 
     if (this.arModelAnchor && this.arModelAnchor.visible) {
@@ -616,17 +706,29 @@ export class ARScene {
 
       const dz = cameraPosition.z - modelPosition.z;
 
-      /*
-       * Rotate only around Y.
-       */
       this.arModelAnchor.rotation.y = Math.atan2(dx, dz);
     }
 
     // ===================================================
-    // RENDER
+    // NORMAL XR RENDER
     // ===================================================
 
     this.renderer.render(this.scene, this.camera);
+
+    // ===================================================
+    // CAPTURE REQUEST
+    // ===================================================
+
+    /*
+     * VERY IMPORTANT:
+     *
+     * getCameraTexture() must be called
+     * during the XR animation frame.
+     */
+
+    if (frame && this.captureRequested) {
+      this.captureCurrentXRFrame(frame);
+    }
   };
 
   // =====================================================
@@ -665,9 +767,9 @@ export class ARScene {
 
     this.renderer.setAnimationLoop(null);
 
-    // ---------------------------------------------------
-    // Model cleanup
-    // ---------------------------------------------------
+    if (this.captureReject) {
+      this.captureReject(new Error("AR scene destroyed."));
+    }
 
     if (this.arModel) {
       this.arModel.geometry.dispose();
@@ -679,19 +781,10 @@ export class ARScene {
       this.arModel.material.dispose();
     }
 
-    // ---------------------------------------------------
-    // Reticle cleanup
-    // ---------------------------------------------------
-
     if (this.reticle) {
       this.reticle.geometry.dispose();
-
       this.reticle.material.dispose();
     }
-
-    // ---------------------------------------------------
-    // Renderer cleanup
-    // ---------------------------------------------------
 
     this.renderer.dispose();
 
